@@ -17,6 +17,13 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Messages are required' });
   }
 
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    console.error('GEMINI_API_KEY is not set');
+    return res.status(500).json({ error: 'API key not configured' });
+  }
+
   try {
     const conversationHistory = messages
       .map((m) => `${m.role === 'user' ? 'User' : 'Luna'}: ${m.content}`)
@@ -24,25 +31,24 @@ export default async function handler(req, res) {
 
     const fullPrompt = `${system}
 
-Important instructions for this response:
-- Give specific, accurate, well researched medical and biological information
-- Use real hormone names, cycle day ranges, and scientific explanations
-- Be warm and clear, never vague or generic
-- Do not repeat any previous opening lines
-- End with one practical tip
+You must always provide detailed, accurate, well researched answers. Never say you cannot help. Always respond with real medical and biological information about the topic asked.
 
 Conversation so far:
 ${conversationHistory}
 
 Luna:`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    const geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: fullPrompt }] }],
+          contents: [
+            {
+              parts: [{ text: fullPrompt }],
+            },
+          ],
           generationConfig: {
             maxOutputTokens: 1000,
             temperature: 0.8,
@@ -51,20 +57,22 @@ Luna:`;
       }
     );
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Gemini error:', errorData);
-      return res.status(response.status).json({ error: errorData });
+    const responseText = await geminiResponse.text();
+
+    if (!geminiResponse.ok) {
+      console.error('Gemini API failed:', responseText);
+      return res.status(500).json({ error: 'Gemini API error', details: responseText });
     }
 
-    const data = await response.json();
+    const data = JSON.parse(responseText);
     const reply =
       data.candidates?.[0]?.content?.parts?.[0]?.text ||
-      'I am here for you. Could you rephrase that?';
+      'I was unable to generate a response. Please try again.';
 
     return res.status(200).json({ reply });
+
   } catch (error) {
-    console.error('API error:', error);
-    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    console.error('Handler error:', error.message);
+    return res.status(500).json({ error: error.message });
   }
 }
